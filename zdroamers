@@ -1,0 +1,184 @@
+#!/bin/sh
+#
+# find top roamers in ruckus syslog info
+#
+# William Burns
+
+
+CLIENTFILTER=""
+APFILTER=""
+HIGHLIGHT=false
+VARLOGMESSAGES="messages"
+#Change CONTROLLERADDRESS to your own ZD controller address
+CONTROLLERADDRESS="192.168.1.99"
+DETAIL=false
+DEBUG=false
+NOW=false
+NOW2=false
+TAIL="f"
+MAXOUI=""
+
+while echo $1 |grep "^-" >/dev/null
+do
+  case $1 in
+    "--controller" )
+      CONTROLLERADDRESS=$2
+      shift;shift
+      ;;
+    "--debug" )
+      DEBUG=true
+      shift
+      ;;
+    "--now" )
+      NOW=true
+      DETAIL=true
+      NOW2=true
+      shift
+      ;;
+    "--last" )
+      NOW=true
+      TAIL=$2
+      shift;shift
+      ;;
+    "--detail" )
+      DETAIL=true
+      shift
+      ;;
+    "--client" )
+      CLIENTFILTER="$CLIENTFILTER -e $2"
+      shift;shift
+      ;;
+    "--highlight" | "--hilight" | "--hilite" )
+      HIGHLIGHT=true
+      shift
+      ;;
+    "--maxoui" )
+      MAXOUI=$2
+      shift;shift
+      ;;
+    "--nslookup" )
+      NSLOOKUP=true
+      shift
+      ;;
+    "--ap" )
+      APFILTER="$APFILTER -e $2"
+      shift;shift
+      ;;
+    "--help" | "-?" | "-h" | * )
+      echo Usage:
+      echo $0 "[OPTIONS] [<var/log/messagefile>]"
+      echo
+      echo 'Produce a list of client MAC addresses sorted by number of "roaming event" log entries'
+      echo "(or use options to dump raw log information)"
+      echo "note: there are 2 log entries per roaming event"
+      echo OPTIONS:
+      echo "--help -? -h"
+      echo "--controller <controlleraddress> ;# filter on the IP of the specified controller"
+      echo "--client <mac:ad:dr:es:s>        ;# filter on client mac address"
+      echo '--highlight           ;# make "--client" option highlight mac addresses, not filter them'
+      echo "--maxoui <n>          ;# set the number of roam messages that triggers an oui lookup"
+      echo "--nslookup            ;# if --maxoui was specified, attempt to nslookup the clients"
+      echo "--ap <mac:ad:dr:es:s> ;# filter on AP mac address"
+      echo "--detail           ;# output raw (colorized) data instead of counting roaming lines per MAC"
+      echo '--last <linecount> ;# only use the last "linecount" number of lines from "messages"'
+      echo '--now   ;# only report on new log entries as they are received. implies "--detail" option'
+      echo "--debug ;# turn on debugging output"
+      exit
+      ;;
+  esac
+done
+
+VARLOGMESSAGES=${1:-$VARLOGMESSAGES}
+
+
+if $NOW
+then
+  $DEBUG && echo "tail -${TAIL} $VARLOGMESSAGES" >&2
+  $DEBUG && echo "fgrep -w $CONTROLLERADDRESS" >&2
+  tail -${TAIL} $VARLOGMESSAGES \
+  | fgrep -w $CONTROLLERADDRESS
+else
+  $DEBUG && echo "fgrep -w $CONTROLLERADDRESS $VARLOGMESSAGES" >&2
+  fgrep -w $CONTROLLERADDRESS $VARLOGMESSAGES
+fi \
+| if [ ! -z "${CLIENTFILTER}${APFILTER}" ]
+  then
+    if $HIGHLIGHT
+    then
+      # only use the client filter to highlight with color
+      $DEBUG && echo "fgrep $CLIENTFILTER -e '$'" >&2
+      eval "grep --color=always $CLIENTFILTER -e '$'"
+    else
+      $DEBUG && echo "fgrep $CLIENTFILTER $APFILTER" >&2
+      if [ -z "$APFILTER" ]
+      then
+        #eval "fgrep --color=always $CLIENTFILTER"
+        eval "fgrep -e 'clusterThread()' $CLIENTFILTER" \
+        | eval "grep --color=always $CLIENTFILTER -e '$'"
+      else
+        eval "fgrep $CLIENTFILTER $APFILTER" \
+        | eval "grep --color=always $CLIENTFILTER -e '$'"
+      fi
+    fi
+  else
+    cat
+  fi \
+| GREP_COLOR="1;34" grep --color=always -e "roams from AP" -e "roams out to AP" -e '$' \
+| if $DETAIL
+  then
+    if $NOW2
+    then
+      $DEBUG && echo 'fgrep -e "detects User" -e "handle_assoc()" -e "handle_disassoc()"' >&2
+      fgrep -e "detects User" -e "handle_assoc()" -e "handle_disassoc()" -e "handle_frame()" -e "joins WLAN" -e "leave WLAN" -e "disconnects from WLAN" -e "clusterThread()"
+    else
+      $DEBUG && echo 'fgrep -e "detects User" -e "handle_assoc()" -e "handle_disassoc()"' >&2
+      fgrep -e "detects User" -e "handle_assoc()" -e "handle_disassoc()"
+    fi \
+    |  while read F1 F2 F3 F4 F5 F6 JUNK
+       do
+         if [ "$F6" = "handle_assoc():VAP" ]
+         then
+           echo
+         fi
+         echo $F1 $F2 $F3 $F4 $F5 $F6 $JUNK
+       done
+  else
+    $DEBUG && echo 'fgrep -e "detects User"'
+    $DEBUG && echo "sed -e 's/^.*detects User\[//' -e 's/\] in WLAN.*$//'"
+    $DEBUG && echo "sort | uniq -c | sort -n"
+    fgrep -e "detects User" \
+    |sed -e 's/^.*detects User\[//' -e 's/\] in WLAN.*$//' \
+    | sort | uniq -c | sort -n \
+    | if [ -z "$MAXOUI" ]
+      then
+        cat
+      else
+        sed -e 's/\(^ *[^ ]* *\)\(..\):\(..\):\(..\)\(:..:..:..\)/\1\2:\3:\4\5 \2\3\4/' \
+        | while read COUNT MACADDRESS OUI JUNK
+        do
+          if [ "$COUNT" -ge "$MAXOUI" ]
+          then
+            if [ $NSLOOKUP ]
+            then
+              CLIENTMAC=`(echo "ibase=16;"; echo "$MACADDRESS;" | tr "[:lower:]:" "[:upper:];") |bc`
+              CLIENTMAC=`echo $CLIENTMAC| tr " " "."`
+              $DEBUG && echo $CLIENTMAC
+              $DEBUG && echo snmpget -On -c ITOVWREAD -v2c -Pe -m "" $CONTROLLERADDRESS 1.3.6.1.4.1.25053.1.2.2.1.1.3.1.1.8.6.$CLIENTMAC
+              IP=`snmpget -On -c ITOVWREAD -v2c -Pe -m "" $CONTROLLERADDRESS 1.3.6.1.4.1.25053.1.2.2.1.1.3.1.1.8.6.$CLIENTMAC \
+                  | sed -e 's/^.* \([^ ]*\)/\1/'`
+              if [ "$IP" == "OID" ]
+              then
+                NAME=""
+              else
+                NAME=`host -t PTR -4 $IP | sed -e 's/^.* \([^ ]*\)/\1/'`
+              fi
+              echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt` $IP $NAME
+            else
+              echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt`
+            fi
+          else
+            echo -e "\t$COUNT $MACADDRESS"
+          fi
+        done
+      fi
+  fi
