@@ -1,0 +1,12 @@
+#!/bin/sh
+# getoui
+#
+# download the standard oui.txt file
+# then trim it down to the minimum required by the zdroamer command
+# oui.txt is needed to support the zdroamer --maxoui feature
+#
+# William Burns
+
+wget http://standards.ieee.org/develop/regauth/oui/oui.txt
+cp oui.txt oui.txt.old
+fgrep "(base 16)" oui.txt.old >oui.txt
