@@ -96,6 +96,20 @@ do
 done
 
 VARLOGMESSAGES=${1:-$VARLOGMESSAGES}
+if [ ! -r $VARLOGMESSAGES ]
+then
+ if [ -e $VARLOGMESSAGES ]
+ then
+   echo "could not read '${VARLOGMESSAGES}'. due to permissions?"
+   exit
+ fi
+ VARLOGMESSAGES=/var/log/$VARLOGMESSAGES
+ if [ ! -r $VARLOGMESSAGES ]
+ then
+   echo "could not read '${VARLOGMESSAGES}'"
+   exit
+ fi
+fi
 
 
 if $NOW
