@@ -12,6 +12,8 @@ VARLOGMESSAGES="messages"
 #Change CONTROLLERADDRESS to your own ZD controller address
 CONTROLLERADDRESS="192.168.1.99"
 DETAIL=false
+NSLOOKUP=false
+OSLOOKUP=false
 DEBUG=false
 NOW=false
 NOW2=false
@@ -56,6 +58,10 @@ do
       MAXOUI=$2
       shift;shift
       ;;
+    "--oslookup" )
+       OSLOOKUP=true
+       shift
+       ;;
     "--nslookup" )
       NSLOOKUP=true
       shift
@@ -78,6 +84,7 @@ do
       echo '--highlight           ;# make "--client" option highlight mac addresses, not filter them'
       echo "--maxoui <n>          ;# set the number of roam messages that triggers an oui lookup"
       echo "--nslookup            ;# if --maxoui was specified, attempt to nslookup the clients"
+      echo "--oslookup            ;# if --maxoui was specified, search clientos.txt instead of oui.txt"
       echo "--ap <mac:ad:dr:es:s> ;# filter on AP mac address"
       echo "--detail           ;# output raw (colorized) data instead of counting roaming lines per MAC"
       echo '--last <linecount> ;# only use the last "linecount" number of lines from "messages"'
@@ -158,23 +165,34 @@ fi \
         do
           if [ "$COUNT" -ge "$MAXOUI" ]
           then
-            if [ $NSLOOKUP ]
+            if [ $OSLOOKUP ]
             then
-              CLIENTMAC=`(echo "ibase=16;"; echo "$MACADDRESS;" | tr "[:lower:]:" "[:upper:];") |bc`
-              CLIENTMAC=`echo $CLIENTMAC| tr " " "."`
-              $DEBUG && echo $CLIENTMAC
-              $DEBUG && echo snmpget -On -c public -v2c -Pe -m "" $CONTROLLERADDRESS 1.3.6.1.4.1.25053.1.2.2.1.1.3.1.1.8.6.$CLIENTMAC
-              IP=`snmpget -On -c public -v2c -Pe -m "" $CONTROLLERADDRESS 1.3.6.1.4.1.25053.1.2.2.1.1.3.1.1.8.6.$CLIENTMAC \
-                  | sed -e 's/^.* \([^ ]*\)/\1/'`
-              if [ "$IP" == "OID" ]
+              #CLIENTMAC=`echo "$MACADDRESS" | tr "[:upper:] " "[:lower:]:"`
+              if CLIENTOS=`grep "^${MACADDRESS}" ./clientos.txt`
               then
-                NAME=""
+                echo -e "\t$COUNT $CLIENTOS"
               else
-                NAME=`host -t PTR -4 $IP | sed -e 's/^.* \([^ ]*\)/\1/'`
+                echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt`
               fi
-              echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt` $IP $NAME
             else
-              echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt`
+              if [ $NSLOOKUP ]
+              then
+                CLIENTMAC=`(echo "ibase=16;"; echo "$MACADDRESS;" | tr "[:lower:]:" "[:upper:];") |bc`
+                CLIENTMAC=`echo $CLIENTMAC| tr " " "."`
+                $DEBUG && echo $CLIENTMAC
+                $DEBUG && echo snmpget -On -c public -v2c -Pe -m "" $CONTROLLERADDRESS 1.3.6.1.4.1.25053.1.2.2.1.1.3.1.1.8.6.$CLIENTMAC
+                IP=`snmpget -On -c public -v2c -Pe -m "" $CONTROLLERADDRESS 1.3.6.1.4.1.25053.1.2.2.1.1.3.1.1.8.6.$CLIENTMAC \
+                    | sed -e 's/^.* \([^ ]*\)/\1/'`
+                if [ "$IP" == "OID" ]
+                then
+                  NAME=""
+                else
+                  NAME=`host -t PTR -4 $IP | sed -e 's/^.* \([^ ]*\)/\1/'`
+                fi
+                echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt` $IP $NAME
+              else
+                echo -e "\t$COUNT $MACADDRESS "`grep -m 1 -i "^  $OUI" oui.txt`
+              fi
             fi
           else
             echo -e "\t$COUNT $MACADDRESS"
